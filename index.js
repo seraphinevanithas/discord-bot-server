@@ -99,37 +99,31 @@ app.post("/export", async (req, res) => {
     doc.moveDown();
 
     // Messages
-    filtered.reverse().forEach(msg => {
-      const time = new Date(msg.createdTimestamp).toLocaleString();
+filtered.reverse().forEach(msg => {
+  const time = new Date(msg.createdTimestamp).toLocaleString();
 
-      let content = msg.content || "";
+  let content = msg.content || "";
 
-      // Emoji cleanup
-      content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+  // emojis (convert custom → text)
+  content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
 
-      // Highlight links
-      content = content.replace(/(https?:\/\/[^\s]+)/g, "🔗 $1");
+  // URLs → plain text (no clickable)
+  content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
 
-      // Attachments (images/files)
-      if (msg.attachments && msg.attachments.size > 0) {
-        msg.attachments.forEach(att => {
-          content += `\n📎 ${att.url}`;
-        });
-      }
+  // attachments (simple mode A)
+  if (msg.attachments && msg.attachments.size > 0) {
+    msg.attachments.forEach(att => {
+      content += `\n📎 ${att.name || "file"} (${att.contentType || "unknown"})`;
+    });
+  }
 
-      doc
-        .fontSize(10)
-        .text(`[${time}] ${msg.author?.username || "Unknown"}: ${content}`);
-
-      doc.moveDown(0.4);
+  doc
+    .fontSize(10)
+    .text(`[${time}] ${msg.author?.username || "Unknown"}: ${content}`, {
+      link: null
     });
 
-    doc.end();
-
-  } catch (err) {
-    console.error("EXPORT ERROR:", err);
-    res.status(500).json({ error: err.message });
-  }
+  doc.moveDown(0.4);
 });
 
 // ===============================
