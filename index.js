@@ -1,4 +1,4 @@
-require("dotenv").config({ path: __dirname + "/.env" });
+require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
@@ -20,35 +20,40 @@ const client = new Client({
   ]
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// Login safely
+client.login(process.env.DISCORD_TOKEN).catch(err => {
+  console.error("DISCORD LOGIN ERROR:", err);
+});
 
-// ✅ FIXED EVENT
+// Ready event
 client.once("ready", () => {
-  console.log(`Bot logged in as ${client.user.tag}`);
+  console.log(`✅ Bot logged in as ${client.user.tag}`);
 });
 
 // ===============================
-// EXPORT → PDF (STREAM RESPONSE)
+// EXPORT → PDF
 // ===============================
 app.post("/export", async (req, res) => {
   try {
     const { channelId, from, to, clientName } = req.body;
 
-    console.log("EXPORT REQUEST:", req.body);
+    if (!channelId) {
+      return res.status(400).json({ error: "Missing channelId" });
+    }
 
     const channel = await client.channels.fetch(channelId).catch(() => null);
 
-    if (!channel) {
-      return res.status(400).json({ error: "Channel not found" });
+    if (!channel || !channel.messages) {
+      return res.status(400).json({ error: "Channel not accessible" });
     }
 
     let messages = [];
     let lastId = null;
 
     // ===============================
-    // FETCH MESSAGES (SAFE LOOP)
+    // FETCH MESSAGES (LIMITED SAFE LOOP)
     // ===============================
-    while (true) {
+    for (let i = 0; i < 10; i++) {
       const options = { limit: 100 };
       if (lastId) options.before = lastId;
 
@@ -67,7 +72,7 @@ app.post("/export", async (req, res) => {
 
     const filtered = messages.filter(msg => {
       const t = new Date(msg.createdTimestamp);
-      return t >= fromDate && t <= toDate;
+      return (!from || t >= fromDate) && (!to || t <= toDate);
     });
 
     // ===============================
@@ -79,7 +84,7 @@ app.post("/export", async (req, res) => {
       `attachment; filename="LOG_CHATS_${clientName || "export"}.pdf"`
     );
 
-    const doc = new PDFDocument();
+    const doc = new PDFDocument({ margin: 30 });
     doc.pipe(res);
 
     // Header
@@ -91,22 +96,29 @@ app.post("/export", async (req, res) => {
 
     // Messages
     filtered.reverse().forEach(msg => {
-  const time = new Date(msg.createdTimestamp).toLocaleString();
+      const time = new Date(msg.createdTimestamp).toLocaleString();
 
-  let content = msg.content || "";
+      let content = msg.content || "";
 
-  // emoji cleanup
-  content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+      // Emoji cleanup
+      content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
 
-  // highlight links
-  content = content.replace(/(https?:\/\/[^\s]+)/g, "🔗 $1");
+      // Highlight links
+      content = content.replace(/(https?:\/\/[^\s]+)/g, "🔗 $1");
 
-  doc
-    .fontSize(10)
-    .text(`[${time}] ${msg.author.username}: ${content}`);
+      // Attachments (images/files)
+      if (msg.attachments && msg.attachments.size > 0) {
+        msg.attachments.forEach(att => {
+          content += `\n📎 ${att.url}`;
+        });
+      }
 
-  doc.moveDown(0.3);
-});
+      doc
+        .fontSize(10)
+        .text(`[${time}] ${msg.author?.username || "Unknown"}: ${content}`);
+
+      doc.moveDown(0.4);
+    });
 
     doc.end();
 
@@ -122,6 +134,10 @@ app.post("/export", async (req, res) => {
 app.post("/clone", async (req, res) => {
   try {
     const { channelId } = req.body;
+
+    if (!channelId) {
+      return res.status(400).json({ error: "Missing channelId" });
+    }
 
     const oldChannel = await client.channels.fetch(channelId).catch(() => null);
 
@@ -142,14 +158,20 @@ app.post("/clone", async (req, res) => {
 });
 
 // ===============================
+// HEALTH CHECK (VERY IMPORTANT)
+// ===============================
+app.get("/", (req, res) => {
+  res.send("Server is running");
+});
+
+// ===============================
 // START SERVER
 // ===============================
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
 
 // DEBUG
 console.log("TOKEN:", process.env.DISCORD_TOKEN ? "Loaded" : "Missing");
-console.log("PORT:", PORT);
