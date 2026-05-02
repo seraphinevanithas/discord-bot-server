@@ -26,7 +26,7 @@ client.login(process.env.DISCORD_TOKEN).catch(err => {
 });
 
 // Ready event
-  client.once("ready", () => {
+  client.once("clientReady", () => {
   console.log("=================================");
   console.log("BOT LOGIN SUCCESS");
   console.log("Bot tag:", client.user.tag);
