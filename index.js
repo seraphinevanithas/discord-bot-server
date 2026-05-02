@@ -82,7 +82,7 @@ app.post("/export", async (req, res) => {
       `attachment; filename="LOG_CHATS_${clientName || "export"}.pdf"`
     );
 
-    const doc = new PDFDocument({ margin: 30 });
+    const doc = new PDFDocument({ margin: 15 });
     doc.pipe(res);
 
     doc.fontSize(16).text(`Chat Export: ${clientName || "Unknown"}`, {
@@ -106,13 +106,36 @@ app.post("/export", async (req, res) => {
       }
 
       doc
-        .fontSize(10)
-        .text(`[${time}] ${msg.author?.username || "Unknown"}: ${content}`, {
-          link: null
-        });
+        const leftMargin = 20;
+const timeWidth = 130;
+const userWidth = 120;
 
-      doc.moveDown(0.4);
-    });
+const username = (msg.author?.username || "Unknown").slice(0, 18);
+
+const y = doc.y;
+
+// TIME
+doc
+  .fontSize(9)
+  .text(`[${time}]`, leftMargin, y, {
+    width: timeWidth
+  });
+
+// USERNAME
+doc
+  .fontSize(9)
+  .text(username, leftMargin + timeWidth, y, {
+    width: userWidth
+  });
+
+// COLON + MESSAGE
+doc
+  .fontSize(9)
+  .text(`: ${content}`, leftMargin + timeWidth + userWidth, y, {
+    width: 450
+  });
+
+doc.moveDown(0.5);
 
     doc.end(); // 🔥 VERY IMPORTANT
 
