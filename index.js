@@ -157,6 +157,8 @@ app.post("/clone", async (req, res) => {
   }
 });
 
+console.log("Fetching channel:", channelId);
+
 // ===============================
 // HEALTH CHECK (VERY IMPORTANT)
 // ===============================
