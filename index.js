@@ -54,9 +54,6 @@ app.post("/export", async (req, res) => {
     let messages = [];
     let lastId = null;
 
-    // ===============================
-    // FETCH MESSAGES (LIMITED SAFE LOOP)
-    // ===============================
     for (let i = 0; i < 10; i++) {
       const options = { limit: 100 };
       if (lastId) options.before = lastId;
@@ -79,9 +76,6 @@ app.post("/export", async (req, res) => {
       return (!from || t >= fromDate) && (!to || t <= toDate);
     });
 
-    // ===============================
-    // PDF STREAM
-    // ===============================
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
@@ -91,39 +85,41 @@ app.post("/export", async (req, res) => {
     const doc = new PDFDocument({ margin: 30 });
     doc.pipe(res);
 
-    // Header
     doc.fontSize(16).text(`Chat Export: ${clientName || "Unknown"}`, {
       underline: true
     });
 
     doc.moveDown();
 
-    // Messages
-filtered.reverse().forEach(msg => {
-  const time = new Date(msg.createdTimestamp).toLocaleString();
+    filtered.reverse().forEach(msg => {
+      const time = new Date(msg.createdTimestamp).toLocaleString();
 
-  let content = msg.content || "";
+      let content = msg.content || "";
 
-  // emojis (convert custom → text)
-  content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+      content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+      content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
 
-  // URLs → plain text (no clickable)
-  content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
+      if (msg.attachments && msg.attachments.size > 0) {
+        msg.attachments.forEach(att => {
+          content += `\n📎 ${att.name || "file"} (${att.contentType || "unknown"})`;
+        });
+      }
 
-  // attachments (simple mode A)
-  if (msg.attachments && msg.attachments.size > 0) {
-    msg.attachments.forEach(att => {
-      content += `\n📎 ${att.name || "file"} (${att.contentType || "unknown"})`;
+      doc
+        .fontSize(10)
+        .text(`[${time}] ${msg.author?.username || "Unknown"}: ${content}`, {
+          link: null
+        });
+
+      doc.moveDown(0.4);
     });
+
+    doc.end(); // 🔥 VERY IMPORTANT
+
+  } catch (err) {
+    console.error("EXPORT ERROR:", err);
+    res.status(500).json({ error: err.message });
   }
-
-  doc
-    .fontSize(10)
-    .text(`[${time}] ${msg.author?.username || "Unknown"}: ${content}`, {
-      link: null
-    });
-
-  doc.moveDown(0.4);
 });
 
 // ===============================
