@@ -159,6 +159,11 @@ app.post("/clone", async (req, res) => {
 
 console.log("Fetching channel:", channelId);
 
+if (!oldChannel) {
+  console.log("Channel fetch failed:", channelId);
+  return res.status(400).json({ error: "Channel not found" });
+}
+
 // ===============================
 // HEALTH CHECK (VERY IMPORTANT)
 // ===============================
