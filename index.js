@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const { Client, GatewayIntentBits } = require("discord.js");
 const PDFDocument = require("pdfkit");
+const archiver = require("archiver");
 
 const app = express();
 app.use(cors());
@@ -20,13 +21,11 @@ const client = new Client({
   ]
 });
 
-// Login safely
 client.login(process.env.DISCORD_TOKEN).catch(err => {
   console.error("DISCORD LOGIN ERROR:", err);
 });
 
-// Ready event
-  client.once("clientReady", () => {
+client.once("clientReady", () => {
   console.log("=================================");
   console.log("BOT LOGIN SUCCESS");
   console.log("Bot tag:", client.user.tag);
@@ -35,10 +34,8 @@ client.login(process.env.DISCORD_TOKEN).catch(err => {
 });
 
 // ===============================
-// EXPORT → PDF
+// EXPORT → ZIP (MULTI PDF SAFE)
 // ===============================
-const archiver = require("archiver");
-
 app.post("/export", async (req, res) => {
   try {
     const { channelId, from, to, clientName } = req.body;
@@ -56,7 +53,7 @@ app.post("/export", async (req, res) => {
     let messages = [];
     let lastId = null;
 
-    // Fetch messages (max ~2000)
+    // Fetch messages (~2000 max)
     for (let i = 0; i < 20; i++) {
       const options = { limit: 100 };
       if (lastId) options.before = lastId;
@@ -80,7 +77,7 @@ app.post("/export", async (req, res) => {
     });
 
     // ===============================
-    // SPLIT INTO SAFE CHUNKS
+    // SPLIT INTO CHUNKS
     // ===============================
     const chunkSize = 300;
     const chunks = [];
@@ -90,7 +87,7 @@ app.post("/export", async (req, res) => {
     }
 
     // ===============================
-    // ZIP RESPONSE
+    // PREPARE ZIP
     // ===============================
     res.setHeader("Content-Type", "application/zip");
     res.setHeader(
@@ -102,51 +99,58 @@ app.post("/export", async (req, res) => {
     archive.pipe(res);
 
     // ===============================
-    // GENERATE MULTIPLE PDFs
+    // GENERATE PDFs PROPERLY (FIXED)
     // ===============================
-    for (let i = 0; i < chunks.length; i++) {
-      const doc = new PDFDocument({ margin: 20 });
+    const pdfPromises = chunks.map((chunk, index) => {
+      return new Promise((resolve) => {
+        const doc = new PDFDocument({ margin: 20 });
 
-      let buffers = [];
+        let buffers = [];
+        doc.on("data", (d) => buffers.push(d));
 
-      doc.on("data", (chunk) => buffers.push(chunk));
+        doc.on("end", () => {
+          const pdfData = Buffer.concat(buffers);
 
-      doc.on("end", () => {
-        const pdfData = Buffer.concat(buffers);
-
-        archive.append(pdfData, {
-          name: `part_${i + 1}.pdf`
-        });
-      });
-
-      doc.fontSize(14).text(`Chat Export - Part ${i + 1}`, { underline: true });
-      doc.moveDown();
-
-      chunks[i].reverse().forEach((msg) => {
-        const time = new Date(msg.createdTimestamp).toLocaleString();
-
-        let content = msg.content || "";
-
-        // emoji
-        content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
-
-        // links
-        content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
-
-        // attachments
-        if (msg.attachments && msg.attachments.size > 0) {
-          msg.attachments.forEach((att) => {
-            content += `\n📎 ${att.name || "file"}`;
+          resolve({
+            name: `part_${index + 1}.pdf`,
+            data: pdfData
           });
-        }
+        });
 
-        doc.text(`[${time}] ${msg.author?.username || "Unknown"}: ${content}`);
-        doc.moveDown(0.4);
+        doc.fontSize(14).text(`Chat Export - Part ${index + 1}`, { underline: true });
+        doc.moveDown();
+
+        chunk.reverse().forEach((msg) => {
+          const time = new Date(msg.createdTimestamp).toLocaleString();
+
+          let content = msg.content || "";
+
+          content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+          content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
+
+          if (msg.attachments && msg.attachments.size > 0) {
+            msg.attachments.forEach((att) => {
+              content += `\n📎 ${att.name || "file"}`;
+            });
+          }
+
+          doc.text(`[${time}] ${msg.author?.username || "Unknown"}: ${content}`);
+          doc.moveDown(0.4);
+        });
+
+        doc.end();
       });
+    });
 
-      doc.end();
-    }
+    // WAIT ALL PDFs
+    const pdfFiles = await Promise.all(pdfPromises);
 
+    // ADD TO ZIP
+    pdfFiles.forEach((file) => {
+      archive.append(file.data, { name: file.name });
+    });
+
+    // FINALIZE AFTER READY
     archive.finalize();
 
   } catch (err) {
@@ -162,28 +166,18 @@ app.post("/clone", async (req, res) => {
   try {
     const { channelId } = req.body;
 
-    console.log("CLONE REQUEST:", channelId);
-
     if (!channelId) {
       return res.status(400).json({ error: "Missing channelId" });
     }
 
-    const oldChannel = await client.channels.fetch(channelId).catch(err => {
-      console.log("Fetch error:", err);
-      return null;
-    });
+    const oldChannel = await client.channels.fetch(channelId).catch(() => null);
 
     if (!oldChannel) {
-      console.log("Channel fetch failed:", channelId);
       return res.status(400).json({ error: "Channel not found" });
     }
 
-    console.log("Channel found:", oldChannel.name);
-
     const newChannel = await oldChannel.clone();
     await oldChannel.delete();
-
-    console.log("Channel cloned:", newChannel.id);
 
     res.json({ newChannelId: newChannel.id });
 
@@ -194,14 +188,10 @@ app.post("/clone", async (req, res) => {
 });
 
 // ===============================
-// HEALTH CHECK (VERY IMPORTANT)
-// ===============================
 app.get("/", (req, res) => {
   res.send("Server is running");
 });
 
-// ===============================
-// START SERVER
 // ===============================
 const PORT = process.env.PORT || 3000;
 
