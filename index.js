@@ -37,6 +37,8 @@ client.login(process.env.DISCORD_TOKEN).catch(err => {
 // ===============================
 // EXPORT → PDF
 // ===============================
+const archiver = require("archiver");
+
 app.post("/export", async (req, res) => {
   try {
     const { channelId, from, to, clientName } = req.body;
@@ -54,7 +56,7 @@ app.post("/export", async (req, res) => {
     let messages = [];
     let lastId = null;
 
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 20; i++) {
       const options = { limit: 100 };
       if (lastId) options.before = lastId;
 
@@ -76,68 +78,61 @@ app.post("/export", async (req, res) => {
       return (!from || t >= fromDate) && (!to || t <= toDate);
     });
 
-    res.setHeader("Content-Type", "application/pdf");
+    const chunkSize = 300;
+    const chunks = [];
+
+    for (let i = 0; i < filtered.length; i += chunkSize) {
+      chunks.push(filtered.slice(i, i + chunkSize));
+    }
+
+    res.setHeader("Content-Type", "application/zip");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="LOG_CHATS_${clientName || "export"}.pdf"`
+      `attachment; filename="LOG_CHATS_${clientName || "export"}.zip"`
     );
 
-    const doc = new PDFDocument({ margin: 15 });
-    doc.pipe(res);
+    const archive = archiver("zip");
+    archive.pipe(res);
 
-    doc.fontSize(16).text(`Chat Export: ${clientName || "Unknown"}`, {
-      underline: true
-    });
+    for (let i = 0; i < chunks.length; i++) {
+      const doc = new PDFDocument({ margin: 20 });
 
-    doc.moveDown();
+      let buffers = [];
 
-    filtered.reverse().forEach(msg => {
-      const time = new Date(msg.createdTimestamp).toLocaleString();
+      doc.on("data", (chunk) => buffers.push(chunk));
 
-      let content = msg.content || "";
-
-      content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
-      content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
-
-      if (msg.attachments && msg.attachments.size > 0) {
-        msg.attachments.forEach(att => {
-          content += `\n📎 ${att.name || "file"} (${att.contentType || "unknown"})`;
+      doc.on("end", () => {
+        const pdfData = Buffer.concat(buffers);
+        archive.append(pdfData, {
+          name: `part_${i + 1}.pdf`
         });
-      }
+      });
 
-      doc
-        const leftMargin = 20;
-const timeWidth = 130;
-const userWidth = 120;
+      doc.fontSize(14).text(`Chat Export - Part ${i + 1}`, { underline: true });
+      doc.moveDown();
 
-const username = (msg.author?.username || "Unknown").slice(0, 18);
+      chunks[i].reverse().forEach((msg) => {
+        const time = new Date(msg.createdTimestamp).toLocaleString();
 
-const y = doc.y;
+        let content = msg.content || "";
 
-// TIME
-doc
-  .fontSize(9)
-  .text(`[${time}]`, leftMargin, y, {
-    width: timeWidth
-  });
+        content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+        content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
 
-// USERNAME
-doc
-  .fontSize(9)
-  .text(username, leftMargin + timeWidth, y, {
-    width: userWidth
-  });
+        if (msg.attachments && msg.attachments.size > 0) {
+          msg.attachments.forEach((att) => {
+            content += `\n📎 ${att.name || "file"}`;
+          });
+        }
 
-// COLON + MESSAGE
-doc
-  .fontSize(9)
-  .text(`: ${content}`, leftMargin + timeWidth + userWidth, y, {
-    width: 450
-  });
+        doc.text(`[${time}] ${msg.author?.username || "Unknown"}: ${content}`);
+        doc.moveDown(0.4);
+      });
 
-doc.moveDown(0.5);
+      doc.end();
+    }
 
-    doc.end(); // 🔥 VERY IMPORTANT
+    archive.finalize();
 
   } catch (err) {
     console.error("EXPORT ERROR:", err);
