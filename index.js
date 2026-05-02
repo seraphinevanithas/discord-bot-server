@@ -56,6 +56,7 @@ app.post("/export", async (req, res) => {
     let messages = [];
     let lastId = null;
 
+    // Fetch messages (max ~2000)
     for (let i = 0; i < 20; i++) {
       const options = { limit: 100 };
       if (lastId) options.before = lastId;
@@ -78,6 +79,9 @@ app.post("/export", async (req, res) => {
       return (!from || t >= fromDate) && (!to || t <= toDate);
     });
 
+    // ===============================
+    // SPLIT INTO SAFE CHUNKS
+    // ===============================
     const chunkSize = 300;
     const chunks = [];
 
@@ -85,6 +89,9 @@ app.post("/export", async (req, res) => {
       chunks.push(filtered.slice(i, i + chunkSize));
     }
 
+    // ===============================
+    // ZIP RESPONSE
+    // ===============================
     res.setHeader("Content-Type", "application/zip");
     res.setHeader(
       "Content-Disposition",
@@ -94,6 +101,9 @@ app.post("/export", async (req, res) => {
     const archive = archiver("zip");
     archive.pipe(res);
 
+    // ===============================
+    // GENERATE MULTIPLE PDFs
+    // ===============================
     for (let i = 0; i < chunks.length; i++) {
       const doc = new PDFDocument({ margin: 20 });
 
@@ -103,6 +113,7 @@ app.post("/export", async (req, res) => {
 
       doc.on("end", () => {
         const pdfData = Buffer.concat(buffers);
+
         archive.append(pdfData, {
           name: `part_${i + 1}.pdf`
         });
@@ -116,9 +127,13 @@ app.post("/export", async (req, res) => {
 
         let content = msg.content || "";
 
+        // emoji
         content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+
+        // links
         content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
 
+        // attachments
         if (msg.attachments && msg.attachments.size > 0) {
           msg.attachments.forEach((att) => {
             content += `\n📎 ${att.name || "file"}`;
