@@ -82,10 +82,12 @@ app.post("/export", async (req, res) => {
     const chunkSize = 300;
     const chunks = [];
 
-    for (let i = 0; i < filtered.length; i += chunkSize) {
-      chunks.push(filtered.slice(i, i + chunkSize));
-    }
+    const sorted = filtered.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
+    for (let i = 0; i < sorted.length; i += chunkSize) {
+    chunks.push(sorted.slice(i, i + chunkSize));
+    }
+    
     // ===============================
     // PREPARE ZIP
     // ===============================
@@ -117,10 +119,10 @@ app.post("/export", async (req, res) => {
           });
         });
 
-        doc.fontSize(14).text(`Chat Export - Part ${index + 1}`, { underline: true });
+        doc.fontSize(9).text(`Chat Export - Part ${index + 1}`, { underline: true });
         doc.moveDown();
 
-        chunk.reverse().forEach((msg) => {
+        chunk.sort((a, b) => a.createdTimestamp - b.createdTimestamp).forEach((msg) => {
           const time = new Date(msg.createdTimestamp).toLocaleString();
 
           let content = msg.content || "";
@@ -134,8 +136,27 @@ app.post("/export", async (req, res) => {
             });
           }
 
-          doc.text(`[${time}] ${msg.author?.username || "Unknown"}: ${content}`);
-          doc.moveDown(0.4);
+          const startX = 20;
+          let currentY = doc.y;
+
+          // column positions
+          const timeX = startX;
+          const userX = 140;
+          const msgX = 240;
+
+          // TIME
+          doc.fontSize(8).text(`[${time}]`, timeX, currentY);
+
+          // USERNAME
+          doc.fontSize(9).text(`${msg.author?.username || "Unknown"}`, userX, currentY);
+
+          // COLON + MESSAGE
+          doc.fontSize(9).text(`: ${content}`, msgX, currentY, {
+          width: 320 // wrap nicely
+          });
+
+          // move Y manually (important)
+          doc.moveDown(0.6);
         });
 
         doc.end();
