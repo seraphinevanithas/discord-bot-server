@@ -135,19 +135,28 @@ app.post("/clone", async (req, res) => {
   try {
     const { channelId } = req.body;
 
+    console.log("CLONE REQUEST:", channelId);
+
     if (!channelId) {
       return res.status(400).json({ error: "Missing channelId" });
     }
 
-    const oldChannel = await client.channels.fetch(channelId).catch(() => null);
+    const oldChannel = await client.channels.fetch(channelId).catch(err => {
+      console.log("Fetch error:", err);
+      return null;
+    });
 
     if (!oldChannel) {
+      console.log("Channel fetch failed:", channelId);
       return res.status(400).json({ error: "Channel not found" });
     }
 
-    const newChannel = await oldChannel.clone();
+    console.log("Channel found:", oldChannel.name);
 
+    const newChannel = await oldChannel.clone();
     await oldChannel.delete();
+
+    console.log("Channel cloned:", newChannel.id);
 
     res.json({ newChannelId: newChannel.id });
 
@@ -156,13 +165,6 @@ app.post("/clone", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-console.log("Fetching channel:", channelId);
-
-if (!oldChannel) {
-  console.log("Channel fetch failed:", channelId);
-  return res.status(400).json({ error: "Channel not found" });
-}
 
 // ===============================
 // HEALTH CHECK (VERY IMPORTANT)
