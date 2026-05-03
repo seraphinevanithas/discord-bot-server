@@ -36,7 +36,7 @@ client.once("clientReady", () => {
 });
 
 // ===============================
-// EXPORT → ZIP (MULTI PDF SAFE + MEDIA)
+// EXPORT → ZIP (MULTI PDF SAFE + MEDIA) [FIXED]
 // ===============================
 app.post("/export", async (req, res) => {
   try {
@@ -52,6 +52,9 @@ app.post("/export", async (req, res) => {
       return res.status(400).json({ error: "Channel not accessible" });
     }
 
+    // ===============================
+    // FETCH MESSAGES
+    // ===============================
     let messages = [];
     let lastId = null;
 
@@ -77,39 +80,67 @@ app.post("/export", async (req, res) => {
       return (!from || t >= fromDate) && (!to || t <= toDate);
     });
 
-    // SORT
     const sorted = filtered.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
-    // SPLIT
+    // ===============================
+    // SPLIT INTO CHUNKS
+    // ===============================
     const chunkSize = 300;
     const chunks = [];
     for (let i = 0; i < sorted.length; i += chunkSize) {
       chunks.push(sorted.slice(i, i + chunkSize));
     }
 
-    // ZIP
+    // ===============================
+    // PRELOAD ALL IMAGES (CRITICAL FIX)
+    // ===============================
+    const imageCache = new Map();
+
+    for (const msg of sorted) {
+      if (msg.attachments?.size > 0) {
+        for (const att of msg.attachments.values()) {
+          if (att.contentType?.startsWith("image")) {
+            try {
+              const res = await fetch(att.url);
+              const buf = Buffer.from(await res.arrayBuffer());
+              imageCache.set(att.url, buf);
+            } catch {
+              imageCache.set(att.url, null);
+            }
+          }
+        }
+      }
+    }
+
+    // ===============================
+    // SET ZIP HEADERS
+    // ===============================
     res.setHeader("Content-Type", "application/zip");
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="LOG_CHATS_${clientName || "export"}.zip"`
     );
 
-    const archive = archiver("zip");
+    const archive = archiver("zip", { zlib: { level: 9 } });
+
+    archive.on("error", err => {
+      console.error("ARCHIVE ERROR:", err);
+      res.status(500).end();
+    });
+
     archive.pipe(res);
 
     // ===============================
     // GENERATE PDF PER CHUNK
     // ===============================
     for (let i = 0; i < chunks.length; i++) {
-
       const doc = new PDFDocument({ margin: 20 });
       let buffers = [];
 
-      doc.on("data", (d) => buffers.push(d));
+      doc.on("data", d => buffers.push(d));
 
       const chunk = chunks[i];
 
-      // preprocess usernames
       const processed = chunk.map(msg => ({
         msg,
         username: (msg.author?.username || "Unknown").slice(0, 15)
@@ -123,8 +154,7 @@ app.post("/export", async (req, res) => {
       const userWidth = maxUserLength * charWidth;
       const gap = charWidth * 3;
 
-      const startX = 20;
-      const timeX = startX;
+      const timeX = 20;
       const userX = timeX + timeWidth + gap;
       const msgX = userX + userWidth + gap;
 
@@ -138,7 +168,6 @@ app.post("/export", async (req, res) => {
       // RENDER MESSAGES
       // ===============================
       for (const { msg, username } of processed) {
-
         const d = new Date(msg.createdTimestamp);
 
         const day = String(d.getDate()).padStart(2, "0");
@@ -166,22 +195,25 @@ app.post("/export", async (req, res) => {
         doc.moveDown(0.4);
 
         // ===============================
-        // ATTACHMENTS (IMAGE PREVIEW)
+        // ATTACHMENTS (SAFE - NO ASYNC)
         // ===============================
         if (msg.attachments?.size > 0) {
           for (const att of msg.attachments.values()) {
-            try {
-              if (att.contentType?.startsWith("image")) {
-                const res = await fetch(att.url);
-                const buf = Buffer.from(await res.arrayBuffer());
+            if (att.contentType?.startsWith("image")) {
+              const img = imageCache.get(att.url);
 
-                doc.image(buf, { fit: [400, 400] });
-                doc.moveDown(0.5);
+              if (img) {
+                try {
+                  doc.image(img, { fit: [400, 400] });
+                  doc.moveDown(0.5);
+                } catch {
+                  doc.text("[image render failed]");
+                }
               } else {
-                doc.fontSize(8).text(`📎 ${att.name}`);
+                doc.text("[image failed]");
               }
-            } catch {
-              doc.text("[image failed]");
+            } else {
+              doc.fontSize(8).text(`📎 ${att.name}`);
             }
           }
         }
@@ -189,14 +221,18 @@ app.post("/export", async (req, res) => {
 
       doc.end();
 
-      const pdfData = await new Promise(resolve =>
-        doc.on("end", () => resolve(Buffer.concat(buffers)))
-      );
+      const pdfData = await new Promise((resolve, reject) => {
+        doc.on("end", () => resolve(Buffer.concat(buffers)));
+        doc.on("error", reject);
+      });
 
       archive.append(pdfData, { name: `part_${i + 1}.pdf` });
     }
 
-    archive.finalize();
+    // ===============================
+    // FINALIZE ZIP (IMPORTANT)
+    // ===============================
+    await archive.finalize();
 
   } catch (err) {
     console.error("EXPORT ERROR:", err);
