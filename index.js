@@ -36,7 +36,7 @@ client.once("clientReady", () => {
 });
 
 // ===============================
-// EXPORT → ZIP (MULTI PDF SAFE)
+// EXPORT → ZIP (MULTI PDF SAFE + MEDIA)
 // ===============================
 app.post("/export", async (req, res) => {
   try {
@@ -55,7 +55,6 @@ app.post("/export", async (req, res) => {
     let messages = [];
     let lastId = null;
 
-    // Fetch messages (~2000 max)
     for (let i = 0; i < 20; i++) {
       const options = { limit: 100 };
       if (lastId) options.before = lastId;
@@ -78,21 +77,17 @@ app.post("/export", async (req, res) => {
       return (!from || t >= fromDate) && (!to || t <= toDate);
     });
 
-    // ===============================
-    // SPLIT INTO CHUNKS
-    // ===============================
-    const chunkSize = 300;
-    const chunks = [];
-
+    // SORT
     const sorted = filtered.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
+    // SPLIT
+    const chunkSize = 300;
+    const chunks = [];
     for (let i = 0; i < sorted.length; i += chunkSize) {
-    chunks.push(sorted.slice(i, i + chunkSize));
+      chunks.push(sorted.slice(i, i + chunkSize));
     }
-    
-    // ===============================
-    // PREPARE ZIP
-    // ===============================
+
+    // ZIP
     res.setHeader("Content-Type", "application/zip");
     res.setHeader(
       "Content-Disposition",
@@ -102,112 +97,112 @@ app.post("/export", async (req, res) => {
     const archive = archiver("zip");
     archive.pipe(res);
 
-// ===============================
-// RENDER (ASYNC ENABLED)
-// ===============================
-for (const { msg, username } of processed) {
+    // ===============================
+    // GENERATE PDF PER CHUNK
+    // ===============================
+    for (let i = 0; i < chunks.length; i++) {
 
-  const d = new Date(msg.createdTimestamp);
+      const doc = new PDFDocument({ margin: 20 });
+      let buffers = [];
 
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const year = String(d.getFullYear()).slice(-2);
+      doc.on("data", (d) => buffers.push(d));
 
-  let hours = d.getHours();
-  const minutes = String(d.getMinutes()).padStart(2, "0");
+      const chunk = chunks[i];
 
-  const ampm = hours >= 12 ? "PM" : "AM";
-  hours = hours % 12 || 12;
+      // preprocess usernames
+      const processed = chunk.map(msg => ({
+        msg,
+        username: (msg.author?.username || "Unknown").slice(0, 15)
+      }));
 
-  const time = `${day}/${month}/${year}, ${hours}:${minutes} ${ampm}`;
+      const maxUserLength = Math.max(...processed.map(p => p.username.length), 5);
 
-  let content = msg.cleanContent || msg.content || "";
+      const charWidth = 5.5;
+      const sampleTime = "[88/88/88, 88:88 PM]";
+      const timeWidth = sampleTime.length * charWidth;
+      const userWidth = maxUserLength * charWidth;
+      const gap = charWidth * 3;
 
-  // remove bad characters (keep emoji safe)
-  content = content.replace(/[\u0000-\u001F\u007F]/g, "");
+      const startX = 20;
+      const timeX = startX;
+      const userX = timeX + timeWidth + gap;
+      const msgX = userX + userWidth + gap;
 
-  // discord emoji fallback
-  content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+      // HEADER
+      doc.font("Helvetica-Bold").fontSize(11)
+        .text(`Chat Export - Part ${i + 1}`, { underline: true });
 
-  // links
-  content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
+      doc.moveDown(0.8);
 
-  const y = doc.y;
+      // ===============================
+      // RENDER MESSAGES
+      // ===============================
+      for (const { msg, username } of processed) {
 
-  // TIME
-  doc.font("Helvetica")
-    .fontSize(8)
-    .text(`[${time}]`, timeX, y);
+        const d = new Date(msg.createdTimestamp);
 
-  // USERNAME
-  doc.font("Helvetica-Bold")
-    .fontSize(9)
-    .text(username.padEnd(maxUserLength, " "), userX, y);
+        const day = String(d.getDate()).padStart(2, "0");
+        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const year = String(d.getFullYear()).slice(-2);
 
-  // MESSAGE
-  doc.font("Helvetica")
-    .fontSize(9)
-    .text(`: ${content}`, msgX, y, {
-      width: 300
-    });
+        let hours = d.getHours();
+        const minutes = String(d.getMinutes()).padStart(2, "0");
 
-  doc.moveDown(0.4);
+        const ampm = hours >= 12 ? "PM" : "AM";
+        hours = hours % 12 || 12;
 
-  // ===============================
-  // 🖼️ ATTACHMENTS (IMAGE PREVIEW)
-  // ===============================
-  if (msg.attachments && msg.attachments.size > 0) {
-    for (const att of msg.attachments.values()) {
-      try {
-        if (att.contentType && att.contentType.startsWith("image")) {
-          const res = await fetch(att.url);
-          const arr = await res.arrayBuffer();
-          const buf = Buffer.from(arr);
+        const time = `${day}/${month}/${year}, ${hours}:${minutes} ${ampm}`;
 
-          doc.image(buf, {
-            fit: [400, 400]
-          });
+        let content = msg.cleanContent || msg.content || "";
+        content = content.replace(/[\u0000-\u001F\u007F]/g, "");
+        content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
 
-          doc.moveDown(0.5);
-        } else {
-          doc.fontSize(8).text(`📎 ${att.name}`);
-          doc.moveDown(0.3);
-        }
-      } catch {
-        doc.text("[image failed]");
-      }
-    }
-  }
+        const y = doc.y;
 
-  // ===============================
-  // 🌐 EMBEDS (YOUTUBE / LINKS)
-  // ===============================
-  if (msg.embeds && msg.embeds.length > 0) {
-    for (const embed of msg.embeds) {
+        doc.font("Helvetica").fontSize(8).text(`[${time}]`, timeX, y);
+        doc.font("Helvetica-Bold").fontSize(9).text(username.padEnd(maxUserLength, " "), userX, y);
+        doc.font("Helvetica").fontSize(9).text(`: ${content}`, msgX, y, { width: 300 });
 
-      if (embed.thumbnail?.url) {
-        try {
-          const res = await fetch(embed.thumbnail.url);
-          const arr = await res.arrayBuffer();
-          const buf = Buffer.from(arr);
+        doc.moveDown(0.4);
 
-          doc.image(buf, {
-            fit: [400, 300]
-          });
+        // ===============================
+        // ATTACHMENTS (IMAGE PREVIEW)
+        // ===============================
+        if (msg.attachments?.size > 0) {
+          for (const att of msg.attachments.values()) {
+            try {
+              if (att.contentType?.startsWith("image")) {
+                const res = await fetch(att.url);
+                const buf = Buffer.from(await res.arrayBuffer());
 
-          doc.moveDown(0.5);
-        } catch {
-          doc.text("[preview failed]");
+                doc.image(buf, { fit: [400, 400] });
+                doc.moveDown(0.5);
+              } else {
+                doc.fontSize(8).text(`📎 ${att.name}`);
+              }
+            } catch {
+              doc.text("[image failed]");
+            }
+          }
         }
       }
 
-      if (embed.url) {
-        doc.fontSize(8).text(`🔗 ${embed.url}`);
-        doc.moveDown(0.3);
-      }
+      doc.end();
+
+      const pdfData = await new Promise(resolve =>
+        doc.on("end", () => resolve(Buffer.concat(buffers)))
+      );
+
+      archive.append(pdfData, { name: `part_${i + 1}.pdf` });
     }
+
+    archive.finalize();
+
+  } catch (err) {
+    console.error("EXPORT ERROR:", err);
+    res.status(500).json({ error: err.message });
   }
-}
+});
 
 // ===============================
 // CLONE CHANNEL
