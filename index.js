@@ -36,7 +36,7 @@ client.once("clientReady", () => {
 });
 
 // ===============================
-// EXPORT → ZIP (MULTI PDF SAFE + MEDIA) [FIXED]
+// EXPORT → ZIP (LIGHTWEIGHT + STABLE)
 // ===============================
 app.post("/export", async (req, res) => {
   try {
@@ -92,27 +92,6 @@ app.post("/export", async (req, res) => {
     }
 
     // ===============================
-    // PRELOAD ALL IMAGES (CRITICAL FIX)
-    // ===============================
-    const imageCache = new Map();
-
-    for (const msg of sorted) {
-      if (msg.attachments?.size > 0) {
-        for (const att of msg.attachments.values()) {
-          if (att.contentType?.startsWith("image")) {
-            try {
-              const res = await fetch(att.url);
-              const buf = Buffer.from(await res.arrayBuffer());
-              imageCache.set(att.url, buf);
-            } catch {
-              imageCache.set(att.url, null);
-            }
-          }
-        }
-      }
-    }
-
-    // ===============================
     // SET ZIP HEADERS
     // ===============================
     res.setHeader("Content-Type", "application/zip");
@@ -165,9 +144,10 @@ app.post("/export", async (req, res) => {
       doc.moveDown(0.8);
 
       // ===============================
-      // RENDER MESSAGES
+      // RENDER MESSAGES (LIGHTWEIGHT)
       // ===============================
       for (const { msg, username } of processed) {
+
         const d = new Date(msg.createdTimestamp);
 
         const day = String(d.getDate()).padStart(2, "0");
@@ -182,9 +162,13 @@ app.post("/export", async (req, res) => {
 
         const time = `${day}/${month}/${year}, ${hours}:${minutes} ${ampm}`;
 
+        // ===============================
+        // CLEAN CONTENT
+        // ===============================
         let content = msg.cleanContent || msg.content || "";
-        content = content.replace(/[\u0000-\u001F\u007F]/g, "");
-        content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+
+        content = content.replace(/[\u0000-\u001F\u007F]/g, ""); // remove control chars
+        content = content.replace(/<a?:\w+:\d+>/g, ""); // remove emojis
 
         const y = doc.y;
 
@@ -195,26 +179,23 @@ app.post("/export", async (req, res) => {
         doc.moveDown(0.4);
 
         // ===============================
-        // ATTACHMENTS (SAFE - NO ASYNC)
+        // ATTACHMENTS → CLICKABLE URL
         // ===============================
         if (msg.attachments?.size > 0) {
           for (const att of msg.attachments.values()) {
-            if (att.contentType?.startsWith("image")) {
-              const img = imageCache.get(att.url);
 
-              if (img) {
-                try {
-                  doc.image(img, { fit: [400, 400] });
-                  doc.moveDown(0.5);
-                } catch {
-                  doc.text("[image render failed]");
-                }
-              } else {
-                doc.text("[image failed]");
-              }
-            } else {
-              doc.fontSize(8).text(`📎 ${att.name}`);
-            }
+            const url = att.url;
+
+            doc
+              .fillColor("blue")
+              .fontSize(8)
+              .text(`🔗 ${url}`, msgX, doc.y, {
+                link: url,
+                underline: true
+              });
+
+            doc.fillColor("black");
+            doc.moveDown(0.4);
           }
         }
       }
@@ -230,7 +211,7 @@ app.post("/export", async (req, res) => {
     }
 
     // ===============================
-    // FINALIZE ZIP (IMPORTANT)
+    // FINALIZE ZIP
     // ===============================
     await archive.finalize();
 
