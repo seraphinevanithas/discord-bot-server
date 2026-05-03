@@ -82,6 +82,26 @@ app.post("/export", async (req, res) => {
 
     const sorted = filtered.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
+// ===============================
+// BUILD RAW JSON (FOR EVIDENCE)
+// ===============================
+const rawData = sorted.map(msg => ({
+  id: msg.id,
+  timestamp: msg.createdTimestamp,
+  author: {
+    id: msg.author?.id || null,
+    username: msg.author?.username || "Unknown"
+  },
+  content: msg.cleanContent || msg.content || "",
+  attachments: msg.attachments
+    ? Array.from(msg.attachments.values()).map(att => ({
+        name: att.name,
+        url: att.url,
+        type: att.contentType || null
+      }))
+    : []
+}));
+    
     // ===============================
     // SPLIT INTO CHUNKS
     // ===============================
@@ -210,6 +230,14 @@ app.post("/export", async (req, res) => {
       archive.append(pdfData, { name: `part_${i + 1}.pdf` });
     }
 
+// ===============================
+// ADD RAW JSON TO ZIP
+// ===============================
+archive.append(
+  Buffer.from(JSON.stringify(rawData, null, 2)),
+  { name: `RAW_${clientName || "export"}.json` }
+);
+    
     // ===============================
     // FINALIZE ZIP
     // ===============================
