@@ -199,6 +199,25 @@ const pdfPromises = chunks.map((chunk, index) => {
     doc.end();
   });
 });
+    
+// ===============================
+// WAIT ALL PDFs
+// ===============================
+const pdfFiles = await Promise.all(pdfPromises);
+
+// ADD FILES TO ZIP
+pdfFiles.forEach((file) => {
+  archive.append(file.data, { name: file.name });
+});
+
+// FINALIZE ZIP (VERY IMPORTANT)
+archive.finalize();
+
+} catch (err) {
+  console.error("EXPORT ERROR:", err);
+  res.status(500).json({ error: err.message });
+}
+});
 
 // ===============================
 // CLONE CHANNEL
