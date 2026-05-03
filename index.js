@@ -100,84 +100,104 @@ app.post("/export", async (req, res) => {
     const archive = archiver("zip");
     archive.pipe(res);
 
-    // ===============================
-    // GENERATE PDFs PROPERLY (FIXED)
-    // ===============================
-    const pdfPromises = chunks.map((chunk, index) => {
-      return new Promise((resolve) => {
-        const doc = new PDFDocument({ margin: 20 });
+   // ===============================
+// GENERATE PDFs PROPERLY (ENHANCED)
+// ===============================
+const pdfPromises = chunks.map((chunk, index) => {
+  return new Promise((resolve) => {
+    const doc = new PDFDocument({ margin: 20 });
 
-        let buffers = [];
-        doc.on("data", (d) => buffers.push(d));
+    let buffers = [];
+    doc.on("data", (d) => buffers.push(d));
 
-        doc.on("end", () => {
-          const pdfData = Buffer.concat(buffers);
+    doc.on("end", () => {
+      const pdfData = Buffer.concat(buffers);
 
-          resolve({
-            name: `part_${index + 1}.pdf`,
-            data: pdfData
-          });
-        });
-
-        doc.fontSize(9).text(`Chat Export - Part ${index + 1}`, { underline: true });
-        doc.moveDown();
-
-        chunk.sort((a, b) => a.createdTimestamp - b.createdTimestamp).forEach((msg) => {
-          const time = new Date(msg.createdTimestamp).toLocaleString();
-
-          let content = msg.content || "";
-
-          content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
-          content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
-
-          if (msg.attachments && msg.attachments.size > 0) {
-            msg.attachments.forEach((att) => {
-              content += `\n📎 ${att.name || "file"}`;
-            });
-          }
-
-          const startX = 20;
-          let currentY = doc.y;
-
-          // column positions
-          const timeX = startX;
-          const userX = 140;
-          const msgX = 240;
-
-          // TIME
-          doc.fontSize(8).text(`[${time}]`, timeX, currentY);
-
-          // USERNAME
-          doc.fontSize(9).text(`${msg.author?.username || "Unknown"}`, userX, currentY);
-
-          // COLON + MESSAGE
-          doc.fontSize(9).text(`: ${content}`, msgX, currentY, {
-          width: 320 // wrap nicely
-          });
-
-          // move Y manually (important)
-          doc.moveDown(0.6);
-        });
-
-        doc.end();
+      resolve({
+        name: `part_${index + 1}.pdf`,
+        data: pdfData
       });
     });
 
-    // WAIT ALL PDFs
-    const pdfFiles = await Promise.all(pdfPromises);
+    // ===============================
+    // HEADER
+    // ===============================
+    doc.font("Courier-Bold").fontSize(11)
+      .text(`Chat Export - Part ${index + 1}`, { underline: true });
 
-    // ADD TO ZIP
-    pdfFiles.forEach((file) => {
-      archive.append(file.data, { name: file.name });
+    doc.moveDown(0.8);
+
+    // ===============================
+    // PREPROCESS (for dynamic width)
+    // ===============================
+    const processed = chunk
+      .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+      .map(msg => {
+        let username = (msg.author?.username || "Unknown").slice(0, 15);
+        return {
+          msg,
+          username
+        };
+      });
+
+    // detect longest username
+    const maxUserLength = Math.max(
+      ...processed.map(p => p.username.length),
+      5
+    );
+
+    // dynamic spacing (monospace friendly)
+    const charWidth = 6; // Courier approx width
+    const timeWidth = 130;
+    const userWidth = maxUserLength * charWidth + 10;
+
+    const startX = 20;
+    const timeX = startX;
+    const userX = timeX + timeWidth;
+    const msgX = userX + userWidth + 10;
+
+    // ===============================
+    // RENDER
+    // ===============================
+    processed.forEach(({ msg, username }) => {
+      const time = new Date(msg.createdTimestamp).toLocaleString();
+
+      let content = msg.content || "";
+
+      content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+      content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
+
+      if (msg.attachments && msg.attachments.size > 0) {
+        msg.attachments.forEach((att) => {
+          content += `\n📎 ${att.name || "file"}`;
+        });
+      }
+
+      const y = doc.y;
+
+      // TIME (monospace)
+      doc.font("Courier")
+        .fontSize(8)
+        .text(`[${time}]`, timeX, y);
+
+      // USERNAME (BOLD)
+      doc.font("Courier-Bold")
+        .fontSize(9)
+        .text(username.padEnd(maxUserLength, " "), userX, y);
+
+      // MESSAGE
+      doc.font("Courier")
+        .fontSize(9)
+        .text(`: ${content}`, msgX, y, {
+          width: 320
+        });
+
+      // spacing (clean + compact)
+      doc.moveDown(0.4);
     });
 
-    // FINALIZE AFTER READY
-    archive.finalize();
-
-  } catch (err) {
-    console.error("EXPORT ERROR:", err);
-    res.status(500).json({ error: err.message });
-  }
+    doc.end();
+  });
 });
 
 // ===============================
