@@ -5,6 +5,8 @@ const cors = require("cors");
 const { Client, GatewayIntentBits } = require("discord.js");
 const PDFDocument = require("pdfkit");
 const archiver = require("archiver");
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
 const app = express();
 app.use(cors());
@@ -101,145 +103,111 @@ app.post("/export", async (req, res) => {
     archive.pipe(res);
 
 // ===============================
-// GENERATE PDFs PROPERLY (ENHANCED + SAFE)
+// RENDER (ASYNC ENABLED)
 // ===============================
-const pdfPromises = chunks.map((chunk, index) => {
-  return new Promise((resolve) => {
-    const doc = new PDFDocument({ margin: 20 });
+for (const { msg, username } of processed) {
 
-    let buffers = [];
-    doc.on("data", (d) => buffers.push(d));
+  const d = new Date(msg.createdTimestamp);
 
-    doc.on("end", () => {
-      const pdfData = Buffer.concat(buffers);
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = String(d.getFullYear()).slice(-2);
 
-      resolve({
-        name: `part_${index + 1}.pdf`,
-        data: pdfData
-      });
+  let hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+
+  const time = `${day}/${month}/${year}, ${hours}:${minutes} ${ampm}`;
+
+  let content = msg.cleanContent || msg.content || "";
+
+  // remove bad characters (keep emoji safe)
+  content = content.replace(/[\u0000-\u001F\u007F]/g, "");
+
+  // discord emoji fallback
+  content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+
+  // links
+  content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
+
+  const y = doc.y;
+
+  // TIME
+  doc.font("Helvetica")
+    .fontSize(8)
+    .text(`[${time}]`, timeX, y);
+
+  // USERNAME
+  doc.font("Helvetica-Bold")
+    .fontSize(9)
+    .text(username.padEnd(maxUserLength, " "), userX, y);
+
+  // MESSAGE
+  doc.font("Helvetica")
+    .fontSize(9)
+    .text(`: ${content}`, msgX, y, {
+      width: 300
     });
 
-    // HEADER
-    doc.font("Helvetica-Bold").fontSize(11)
-      .text(`Chat Export - Part ${index + 1}`, { underline: true });
+  doc.moveDown(0.4);
 
-    doc.moveDown(0.8);
+  // ===============================
+  // 🖼️ ATTACHMENTS (IMAGE PREVIEW)
+  // ===============================
+  if (msg.attachments && msg.attachments.size > 0) {
+    for (const att of msg.attachments.values()) {
+      try {
+        if (att.contentType && att.contentType.startsWith("image")) {
+          const res = await fetch(att.url);
+          const arr = await res.arrayBuffer();
+          const buf = Buffer.from(arr);
 
-    // PREPROCESS
-    const processed = chunk
-      .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
-      .map(msg => {
-        let username = (msg.author?.username || "Unknown").slice(0, 15);
-        return { msg, username };
-      });
+          doc.image(buf, {
+            fit: [400, 400]
+          });
 
-    const maxUserLength = Math.max(
-      ...processed.map(p => p.username.length),
-      5
-    );
+          doc.moveDown(0.5);
+        } else {
+          doc.fontSize(8).text(`📎 ${att.name}`);
+          doc.moveDown(0.3);
+        }
+      } catch {
+        doc.text("[image failed]");
+      }
+    }
+  }
 
-    const charWidth = 5.5; // Helvetica is tighter than Courier
+  // ===============================
+  // 🌐 EMBEDS (YOUTUBE / LINKS)
+  // ===============================
+  if (msg.embeds && msg.embeds.length > 0) {
+    for (const embed of msg.embeds) {
 
-    // estimate timestamp width dynamically
-    const sampleTime = "[88/88/88, 88:88 PM]";
-    const timeWidth = sampleTime.length * charWidth;
+      if (embed.thumbnail?.url) {
+        try {
+          const res = await fetch(embed.thumbnail.url);
+          const arr = await res.arrayBuffer();
+          const buf = Buffer.from(arr);
 
-    // username width
-    const userWidth = maxUserLength * charWidth;
+          doc.image(buf, {
+            fit: [400, 300]
+          });
 
-    // spacing (2–3 spaces)
-    const gap = charWidth * 3;
-
-    const startX = 20;
-    const timeX = startX;
-    const userX = timeX + timeWidth + gap;
-    const msgX = userX + userWidth + gap;
-
-    // RENDER
-    processed.forEach(({ msg, username }) => {
-
-      // ===============================
-      // SHORT TIMESTAMP
-      // ===============================
-      const d = new Date(msg.createdTimestamp);
-
-      const day = String(d.getDate()).padStart(2, "0");
-      const month = String(d.getMonth() + 1).padStart(2, "0");
-      const year = String(d.getFullYear()).slice(-2);
-
-      let hours = d.getHours();
-      const minutes = String(d.getMinutes()).padStart(2, "0");
-
-      const ampm = hours >= 12 ? "PM" : "AM";
-      hours = hours % 12 || 12;
-
-      const time = `${day}/${month}/${year}, ${hours}:${minutes} ${ampm}`;
-
-      // ===============================
-      // SAFE CONTENT CLEANING
-      // ===============================
-      let content = msg.cleanContent || msg.content || "";
-
-      // remove broken control chars (keep emoji)
-      content = content.replace(/[\u0000-\u001F\u007F]/g, "");
-
-      // discord emoji → fallback
-      content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
-
-      // links remain text
-      content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
-
-      // attachments (NO newline to avoid blank page bug)
-      if (msg.attachments && msg.attachments.size > 0) {
-        msg.attachments.forEach((att) => {
-          content += ` [📎 ${att.name || "file"}]`;
-        });
+          doc.moveDown(0.5);
+        } catch {
+          doc.text("[preview failed]");
+        }
       }
 
-      const y = doc.y;
-
-      // TIME
-      doc.font("Helvetica")
-        .fontSize(8)
-        .text(`[${time}]`, timeX, y);
-
-      // USERNAME
-      doc.font("Helvetica-Bold")
-        .fontSize(9)
-        .text(username.padEnd(maxUserLength, " "), userX, y);
-
-      // MESSAGE
-      doc.font("Helvetica")
-        .fontSize(9)
-        .text(`: ${content}`, msgX, y, {
-          width: 300
-        });
-
-      doc.moveDown(0.4);
-    });
-
-    doc.end();
-  });
-});
-    
-// ===============================
-// WAIT ALL PDFs
-// ===============================
-const pdfFiles = await Promise.all(pdfPromises);
-
-// ADD FILES TO ZIP
-pdfFiles.forEach((file) => {
-  archive.append(file.data, { name: file.name });
-});
-
-// FINALIZE ZIP (VERY IMPORTANT)
-archive.finalize();
-
-} catch (err) {
-  console.error("EXPORT ERROR:", err);
-  res.status(500).json({ error: err.message });
+      if (embed.url) {
+        doc.fontSize(8).text(`🔗 ${embed.url}`);
+        doc.moveDown(0.3);
+      }
+    }
+  }
 }
-});
 
 // ===============================
 // CLONE CHANNEL
