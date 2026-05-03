@@ -138,14 +138,22 @@ const pdfPromises = chunks.map((chunk, index) => {
       5
     );
 
-    const charWidth = 6;
-    const timeWidth = 120;
-    const userWidth = maxUserLength * charWidth + 10;
+    const charWidth = 5.5; // Helvetica is tighter than Courier
+
+    // estimate timestamp width dynamically
+    const sampleTime = "[88/88/88, 88:88 PM]";
+    const timeWidth = sampleTime.length * charWidth;
+
+    // username width
+    const userWidth = maxUserLength * charWidth;
+
+    // spacing (2–3 spaces)
+    const gap = charWidth * 3;
 
     const startX = 20;
     const timeX = startX;
-    const userX = timeX + timeWidth;
-    const msgX = userX + userWidth + 10;
+    const userX = timeX + timeWidth + gap;
+    const msgX = userX + userWidth + gap;
 
     // RENDER
     processed.forEach(({ msg, username }) => {
