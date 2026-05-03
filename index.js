@@ -100,8 +100,8 @@ app.post("/export", async (req, res) => {
     const archive = archiver("zip");
     archive.pipe(res);
 
-   // ===============================
-// GENERATE PDFs PROPERLY (ENHANCED)
+// ===============================
+// GENERATE PDFs PROPERLY (ENHANCED + SAFE)
 // ===============================
 const pdfPromises = chunks.map((chunk, index) => {
   return new Promise((resolve) => {
@@ -119,36 +119,27 @@ const pdfPromises = chunks.map((chunk, index) => {
       });
     });
 
-    // ===============================
     // HEADER
-    // ===============================
-    doc.font("Courier-Bold").fontSize(11)
+    doc.font("Helvetica-Bold").fontSize(11)
       .text(`Chat Export - Part ${index + 1}`, { underline: true });
 
     doc.moveDown(0.8);
 
-    // ===============================
-    // PREPROCESS (for dynamic width)
-    // ===============================
+    // PREPROCESS
     const processed = chunk
       .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
       .map(msg => {
         let username = (msg.author?.username || "Unknown").slice(0, 15);
-        return {
-          msg,
-          username
-        };
+        return { msg, username };
       });
 
-    // detect longest username
     const maxUserLength = Math.max(
       ...processed.map(p => p.username.length),
       5
     );
 
-    // dynamic spacing (monospace friendly)
-    const charWidth = 6; // Courier approx width
-    const timeWidth = 130;
+    const charWidth = 6;
+    const timeWidth = 120;
     const userWidth = maxUserLength * charWidth + 10;
 
     const startX = 20;
@@ -156,43 +147,66 @@ const pdfPromises = chunks.map((chunk, index) => {
     const userX = timeX + timeWidth;
     const msgX = userX + userWidth + 10;
 
-    // ===============================
     // RENDER
-    // ===============================
     processed.forEach(({ msg, username }) => {
-      const time = new Date(msg.createdTimestamp).toLocaleString();
 
-      let content = msg.content || "";
+      // ===============================
+      // SHORT TIMESTAMP
+      // ===============================
+      const d = new Date(msg.createdTimestamp);
 
+      const day = String(d.getDate()).padStart(2, "0");
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const year = String(d.getFullYear()).slice(-2);
+
+      let hours = d.getHours();
+      const minutes = String(d.getMinutes()).padStart(2, "0");
+
+      const ampm = hours >= 12 ? "PM" : "AM";
+      hours = hours % 12 || 12;
+
+      const time = `${day}/${month}/${year}, ${hours}:${minutes} ${ampm}`;
+
+      // ===============================
+      // SAFE CONTENT CLEANING
+      // ===============================
+      let content = msg.cleanContent || msg.content || "";
+
+      // remove broken control chars (keep emoji)
+      content = content.replace(/[\u0000-\u001F\u007F]/g, "");
+
+      // discord emoji → fallback
       content = content.replace(/<a?:\w+:\d+>/g, "[emoji]");
+
+      // links remain text
       content = content.replace(/(https?:\/\/[^\s]+)/g, "$1");
 
+      // attachments (NO newline to avoid blank page bug)
       if (msg.attachments && msg.attachments.size > 0) {
         msg.attachments.forEach((att) => {
-          content += `\n📎 ${att.name || "file"}`;
+          content += ` [📎 ${att.name || "file"}]`;
         });
       }
 
       const y = doc.y;
 
-      // TIME (monospace)
-      doc.font("Courier")
+      // TIME
+      doc.font("Helvetica")
         .fontSize(8)
         .text(`[${time}]`, timeX, y);
 
-      // USERNAME (BOLD)
-      doc.font("Courier-Bold")
+      // USERNAME
+      doc.font("Helvetica-Bold")
         .fontSize(9)
         .text(username.padEnd(maxUserLength, " "), userX, y);
 
       // MESSAGE
-      doc.font("Courier")
+      doc.font("Helvetica")
         .fontSize(9)
         .text(`: ${content}`, msgX, y, {
-          width: 320
+          width: 300
         });
 
-      // spacing (clean + compact)
       doc.moveDown(0.4);
     });
 
